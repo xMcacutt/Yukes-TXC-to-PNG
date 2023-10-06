@@ -15,5 +15,6 @@ namespace Yukes_TXC_to_TGA
         public int PaletteOffset;
         public byte[] Palette;
         public byte[] Data;
+        public byte[] RGBAData;
     }
 }

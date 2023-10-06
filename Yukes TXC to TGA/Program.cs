@@ -3,10 +3,10 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 using DamienG.Security.Cryptography;
-using System.Drawing;
-using SixLabors.ImageSharp.Formats.Bmp;
+using SixLabors.ImageSharp;
 using System;
 using System.Drawing.Imaging;
+using SixLabors.ImageSharp.Formats;
 
 namespace Yukes_TXC_to_TGA
 {
@@ -65,75 +65,11 @@ namespace Yukes_TXC_to_TGA
             f.Seek(0x40, SeekOrigin.Begin);
             txc.Data = ReadBytes(f, (int)(f.Length - txc.Palette.Length - 0x40));
             f.Close();
-            foreach (byte b in txc.Palette) Console.WriteLine(b.ToString("X"));
-            var oF = File.Create(Path.GetFileNameWithoutExtension(path) + ".png");
+            
+            txc.RGBAData = ComposeRGBA(txc.Data, txc.Palette, txc.BitDepth);
 
-            //MAGIC
-            oF.Write(new byte[] { 0x89, 0x50, 0x4E, 0x47 });
-            oF.Write(new byte[] { 0x0D, 0x0A, 0x1A, 0x0A });
-            Crc32 crc32 = new();
-
-            //HEADER
-            var chunkData = Encoding.ASCII.GetBytes("IHDR")
-                .Concat(BEBitConv.GetBytes(txc.Width - 1))
-                .Concat(BEBitConv.GetBytes(txc.Height))
-                .Concat(new byte[] { (byte)txc.BitDepth, 0x3, 0x0, 0x0, 0x0 })
-                .ToArray();
-            var crcBytes = crc32.ComputeHash(chunkData);
-            oF.Write(BEBitConv.GetBytes(chunkData.Length - 4)
-                .Concat(chunkData)
-                .Concat(crcBytes).ToArray());
-
-            //PALETTE
-            chunkData = Encoding.ASCII.GetBytes("PLTE");
-            List<byte> alphaValues = new List<byte>();
-            for (int i = 0; i < Math.Pow(2, txc.BitDepth); i++)
-            {
-                byte[] bytes = new byte[3];
-                bytes[0] = txc.Palette[i * 4];
-                bytes[1] = txc.Palette[i * 4 + 1];
-                bytes[2] = txc.Palette[i * 4 + 2];
-                chunkData = chunkData.Concat(bytes).ToArray();
-                alphaValues.Add(txc.Palette[(i * 4) + 3]);
-            }
-            crcBytes = crc32.ComputeHash(chunkData);
-            oF.Write(BEBitConv.GetBytes(chunkData.Length - 4)
-                .Concat(chunkData)
-                .Concat(crcBytes).ToArray());
-
-            //ALPHA
-            chunkData = Encoding.ASCII.GetBytes("tRNS");
-            var alphaArray = new byte[1];
-            foreach(byte alpha in alphaValues)
-            {
-                alphaArray[0] = (byte)(alpha * 255/128);
-                chunkData = chunkData.Concat(alphaArray).ToArray();
-            }
-            crcBytes = crc32.ComputeHash(chunkData);
-            oF.Write(BEBitConv.GetBytes(chunkData.Length - 4)
-                .Concat(chunkData)
-                .Concat(crcBytes).ToArray());
-
-            //DATA
-            chunkData = Encoding.ASCII.GetBytes("IDAT");
-            var compressedData = DeflateCompress(txc.Data);
-            chunkData = chunkData.Concat(compressedData).ToArray();
-            crcBytes = crc32.ComputeHash(chunkData);
-            oF.Write(BEBitConv.GetBytes(chunkData.Length - 4)
-                .Concat(chunkData)
-                .Concat(crcBytes).ToArray());
-
-            //END
-            chunkData = Encoding.ASCII.GetBytes("IEND");
-            crcBytes = crc32.ComputeHash(chunkData);
-            oF.Write(BEBitConv.GetBytes(chunkData.Length - 4)
-                .Concat(chunkData)
-                .Concat(crcBytes).ToArray());
-
-            oF.Close();
-            Console.ReadLine();
-            DeflateUncompress(compressedData);
-            Console.ReadLine();
+            Image<Rgba32> image = Image.LoadPixelData<Rgba32>(txc.RGBAData, txc.Width, txc.Height);
+            image.Save(Path.GetFileNameWithoutExtension(path) + ".png", new SixLabors.ImageSharp.Formats.Png.PngEncoder());
             return;
 
         }
@@ -145,54 +81,24 @@ namespace Yukes_TXC_to_TGA
             return buffer;
         }
 
-        public static byte[] DeflateCompress(byte[] uncompressedBytes)
+        public static byte[] ComposeRGBA(byte[] data, byte[] palette, int depth)
         {
-            // Create a MemoryStream to hold the compressed data
-            using MemoryStream compressedStream = new MemoryStream();
-
-            // Create a DeflateStream that writes to the MemoryStream
-            using (ZLibStream stream = new(compressedStream, CompressionMode.Compress, true))
+            using MemoryStream output = new MemoryStream();
+            foreach(byte b in data)
             {
-                try
+                if(depth == 4)
                 {
-                    // Write your uncompressed data to the DeflateStream
-                    stream.Write(uncompressedBytes, 0, uncompressedBytes.Length);
-                    // Flush the data to ensure it's properly compressed
-                    stream.Flush();
+                    int i1 = (b & 0xF0) >> 4;
+                    int i2 = b & 0x0F;
+                    output.Write(new byte[] { palette[i1 * 4], palette[i1 * 4 + 1], palette[i1 * 4 + 2], (byte)(palette[i1 * 4 + 3] * 255 / 128) });
+                    output.Write(new byte[] { palette[i2 * 4], palette[i2 * 4 + 1], palette[i2 * 4 + 2], (byte)(palette[i2 * 4 + 3] * 255 / 128) });
                 }
-                catch (Exception ex)
+                if(depth == 8)
                 {
-                    // Handle exceptions, e.g., log or throw
-                    Console.WriteLine($"Compression error: {ex.Message}");
-                    // You can choose to rethrow the exception here if needed
-                }
-            } // This will automatically close the DeflateStream
-
-            // Get the compressed data as a byte array
-            return compressedStream.ToArray();
-        }
-
-        public static byte[] DeflateUncompress(byte[] compressedBytes)
-        {
-            using MemoryStream uncompressedStream = new();
-            using (MemoryStream compressedStream = new MemoryStream(compressedBytes))
-            using (ZLibStream deflateStream = new(compressedStream, CompressionMode.Decompress))
-            {
-                try
-                {
-                    byte[] buffer = new byte[1024]; // You can adjust the buffer size as needed.
-                    int bytesRead;
-                    while ((bytesRead = deflateStream.Read(buffer, 0, buffer.Length)) > 0)
-                    {
-                        uncompressedStream.Write(buffer, 0, bytesRead);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Decompression error: {ex.Message}");
+                    output.Write(new byte[] { palette[b * 4], palette[b * 4 + 1], palette[b * 4 + 2], (byte)(palette[b * 4 + 3] * 255/128) });
                 }
             }
-            return uncompressedStream.ToArray();
+            return output.ToArray();
         }
     }
 }
