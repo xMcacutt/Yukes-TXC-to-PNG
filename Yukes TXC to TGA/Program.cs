@@ -8,7 +8,7 @@ using System;
 using System.Drawing.Imaging;
 using SixLabors.ImageSharp.Formats;
 
-namespace Yukes_TXC_to_TGA
+namespace Yukes_TXC_to_PNG
 {
     public class Program
     {
@@ -66,6 +66,7 @@ namespace Yukes_TXC_to_TGA
             txc.Data = ReadBytes(f, (int)(f.Length - txc.Palette.Length - 0x40));
             f.Close();
             
+            txc.Palette = PS2ShiftPalette(txc.Palette);
             txc.RGBAData = ComposeRGBA(txc.Data, txc.Palette, txc.BitDepth);
 
             Image<Rgba32> image = Image.LoadPixelData<Rgba32>(txc.RGBAData, txc.Width, txc.Height);
@@ -88,17 +89,37 @@ namespace Yukes_TXC_to_TGA
             {
                 if(depth == 4)
                 {
-                    int i1 = (b & 0xF0) >> 4;
-                    int i2 = b & 0x0F;
-                    output.Write(new byte[] { palette[i1 * 4], palette[i1 * 4 + 1], palette[i1 * 4 + 2], (byte)(palette[i1 * 4 + 3] * 255 / 128) });
-                    output.Write(new byte[] { palette[i2 * 4], palette[i2 * 4 + 1], palette[i2 * 4 + 2], (byte)(palette[i2 * 4 + 3] * 255 / 128) });
+                    int i2 = (b & 0xF0) >> 4;
+                    int i1 = b & 0x0F;
+                    output.Write(new byte[] { palette[i1 * 4], palette[i1 * 4 + 1], palette[i1 * 4 + 2], (byte)(palette[i1 * 4 + 3] * 255f / 128f) });
+                    output.Write(new byte[] { palette[i2 * 4], palette[i2 * 4 + 1], palette[i2 * 4 + 2], (byte)(palette[i2 * 4 + 3] * 255f / 128f) });
                 }
                 if(depth == 8)
                 {
-                    output.Write(new byte[] { palette[b * 4], palette[b * 4 + 1], palette[b * 4 + 2], (byte)(palette[b * 4 + 3] * 255/128) });
+                    output.Write(new byte[] { palette[b * 4], palette[b * 4 + 1], palette[b * 4 + 2], (byte)(palette[b * 4 + 3] * 255f/128f) });
                 }
             }
             return output.ToArray();
         }
+
+        public static byte[] PS2ShiftPalette(byte[] palette)
+        {
+            if (palette.Length < 128) return palette;
+            using MemoryStream output = new MemoryStream();
+            for (int iChunk = 0; iChunk < palette.Length / 128; iChunk++)
+            {
+                byte[][] groups = new byte[4][];
+                for(int iGroup = 0; iGroup < 4; iGroup++)
+                {
+                    groups[iGroup] = palette.Skip(iChunk * 128 + iGroup * 32).Take(32).ToArray();
+                }
+                output.Write(groups[0]);
+                output.Write(groups[2]);
+                output.Write(groups[1]);
+                output.Write(groups[3]);
+            }
+            return output.ToArray();
+        }
+
     }
 }

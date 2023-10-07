@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Yukes_TXC_to_TGA
+namespace Yukes_TXC_to_PNG
 {
     internal class TXC
     {
