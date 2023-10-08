@@ -7,6 +7,8 @@ using SixLabors.ImageSharp;
 using System;
 using System.Drawing.Imaging;
 using SixLabors.ImageSharp.Formats;
+using ImageMagick;
+using System.IO;
 
 namespace Yukes_TXC_to_PNG
 {
@@ -17,18 +19,76 @@ namespace Yukes_TXC_to_PNG
 
         public static void Main(string[] args)
         {
-            if(args.Length == 1)
+            foreach(string arg in args)
             {
-                if (File.Exists(args[0]))
+                if (File.Exists(arg))
                 {
-                    Convert(args[0]);
-                    return;
+                    Convert(arg);        
                 }
             }
+            if (args.Length != 0) return;
 
             while (_run)
             {
-                Convert(Console.ReadLine());
+                Console.Clear();
+                Console.WriteLine("TXC Converter for The DOG Island");
+
+                string input = "";
+                while (!string.Equals(input, "y", StringComparison.CurrentCultureIgnoreCase) && !string.Equals(input, "n", StringComparison.CurrentCultureIgnoreCase))
+                {
+                    Console.WriteLine("Would you like to convert all TXCs?   Y / N");
+                    input = Console.ReadLine();
+                }
+                if (string.Equals(input, "y", StringComparison.CurrentCultureIgnoreCase))
+                {
+                    input = "";
+                    while (!string.Equals(input, "y", StringComparison.CurrentCultureIgnoreCase) && !string.Equals(input, "n", StringComparison.CurrentCultureIgnoreCase))
+                    {
+                        Console.WriteLine("Move files when complete?   Y / N");
+                        input = Console.ReadLine();
+                    }
+                    bool move = string.Equals(input, "y", StringComparison.CurrentCultureIgnoreCase);
+                    
+                    Console.WriteLine("Please enter path to root directory");
+                    _path = Console.ReadLine().Replace("\"", "");
+                    while (!Directory.Exists(_path))
+                    {
+                        Console.WriteLine("Path was invalid");
+                        Console.WriteLine("Please enter path to root directory");
+                        _path = Console.ReadLine().Replace("\"", " ");
+                    }
+                    string output = "";
+                    if (move)
+                    {
+                        Console.WriteLine("Please enter path to output root directory");
+                        output = Console.ReadLine().Replace("\"", "");
+                        while (!Directory.Exists(_path))
+                        {
+                            Console.WriteLine("Path was invalid");
+                            Console.WriteLine("Please enter path to output root directory");
+                            output = Console.ReadLine().Replace("\"", " ");
+                        }
+                    }
+                    Console.WriteLine("Converting...");
+                    ConvertAll(_path, output);
+                    Console.WriteLine("Conversion completed successfully");
+                    Console.ReadLine();
+                }
+                else
+                {
+                    Console.WriteLine("Please enter path to TXC");
+                    _path = Console.ReadLine().Replace("\"", "");
+                    while (!File.Exists(_path) || !_path.EndsWith(".txc", StringComparison.CurrentCultureIgnoreCase))
+                    {
+                        Console.WriteLine("Path was invalid");
+                        Console.WriteLine("Please enter path to TXC");
+                        _path = Console.ReadLine().Replace("\"", " ");
+                    }
+                    Console.WriteLine("Converting...");
+                    Convert(_path);
+                    Console.WriteLine("Conversion completed successfully");
+                    Console.ReadLine();
+                }
             }
         }
 
@@ -42,23 +102,11 @@ namespace Yukes_TXC_to_PNG
                 return;
             }
             TXC txc = new();
-            f.Seek(0x1C, SeekOrigin.Begin);
-            uint bppMarker = BitConverter.ToUInt32(ReadBytes(f, 4), 0);
-            switch (bppMarker)
-            {
-                case 0x14: 
-                    txc.BitDepth = 4; 
-                    break;
-                case 0x13: 
-                    txc.BitDepth = 8; 
-                    break;
-                default:
-                    Console.WriteLine($"Unrecognised bitdepth marker {bppMarker:X}. Ending conversion.");
-                    return;
-            }
+            f.Seek(0x20, SeekOrigin.Begin);
             txc.Width = BitConverter.ToUInt16(ReadBytes(f, 2), 0);
             txc.Height = BitConverter.ToUInt16(ReadBytes(f, 2), 0);
-            f.Seek(0x18, SeekOrigin.Current);
+            f.Seek(0x16, SeekOrigin.Current);
+            txc.BitDepth = (int)Math.Log2(BitConverter.ToInt16(ReadBytes(f, 2), 0));
             txc.PaletteOffset = (int)BitConverter.ToUInt32(ReadBytes(f, 4), 0) + 0x8;
             f.Seek(txc.PaletteOffset, SeekOrigin.Begin);
             txc.Palette = ReadBytes(f, (int)(f.Length - txc.PaletteOffset));
@@ -73,6 +121,45 @@ namespace Yukes_TXC_to_PNG
             image.Save(Path.GetFileNameWithoutExtension(path) + ".png", new SixLabors.ImageSharp.Formats.Png.PngEncoder());
             return;
 
+        }
+
+        public static void ConvertAll(string inDir, string outDir)
+        {
+            foreach (var file in Directory.GetFiles(inDir, "*.txc", SearchOption.AllDirectories))
+            {
+                var f = File.OpenRead(file);
+
+                if (!Enumerable.SequenceEqual(ReadBytes(f, 4), new byte[] { 0x52, 0x54, 0x58, 0x33 }))
+                {
+                    Console.WriteLine("File is not txc. RTX3 Magic not present. Ending conversion.");
+                    return;
+                }
+                TXC txc = new();
+                f.Seek(0x20, SeekOrigin.Begin);
+                txc.Width = BitConverter.ToUInt16(ReadBytes(f, 2), 0);
+                txc.Height = BitConverter.ToUInt16(ReadBytes(f, 2), 0);
+                f.Seek(0x16, SeekOrigin.Current);
+                txc.BitDepth = (int)Math.Log2(BitConverter.ToInt16(ReadBytes(f, 2), 0));
+                txc.PaletteOffset = (int)BitConverter.ToUInt32(ReadBytes(f, 4), 0) + 0x8;
+                f.Seek(txc.PaletteOffset, SeekOrigin.Begin);
+                txc.Palette = ReadBytes(f, (int)(f.Length - txc.PaletteOffset));
+                f.Seek(0x40, SeekOrigin.Begin);
+                txc.Data = ReadBytes(f, (int)(f.Length - txc.Palette.Length - 0x40));
+                f.Close();
+
+                txc.Palette = PS2ShiftPalette(txc.Palette);
+                txc.RGBAData = ComposeRGBA(txc.Data, txc.Palette, txc.BitDepth);
+
+                Image<Rgba32> image = Image.LoadPixelData<Rgba32>(txc.RGBAData, txc.Width, txc.Height);
+
+                string relativePath = Path.GetRelativePath(inDir, file);
+                string outputPath = Path.Combine(outDir, relativePath);
+
+                // Create the necessary directories if they don't exist
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+                image.Save(Path.GetFileNameWithoutExtension(outputPath) + ".png", new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+                return;
+            }
         }
 
         public static byte[] ReadBytes(FileStream f, int len)
