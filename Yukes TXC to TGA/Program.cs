@@ -118,7 +118,7 @@ namespace Yukes_TXC_to_PNG
             txc.RGBAData = ComposeRGBA(txc.Data, txc.Palette, txc.BitDepth);
 
             Image<Rgba32> image = Image.LoadPixelData<Rgba32>(txc.RGBAData, txc.Width, txc.Height);
-            image.Save(Path.GetFileNameWithoutExtension(path) + ".png", new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+            image.Save(Path.ChangeExtension(path, "png"), new SixLabors.ImageSharp.Formats.Png.PngEncoder());
             return;
 
         }
@@ -157,7 +157,7 @@ namespace Yukes_TXC_to_PNG
 
                 // Create the necessary directories if they don't exist
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
-                image.Save(Path.GetFileNameWithoutExtension(outputPath) + ".png", new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+                image.Save(Path.ChangeExtension(outputPath, "png"), new SixLabors.ImageSharp.Formats.Png.PngEncoder());
                 return;
             }
         }
